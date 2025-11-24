@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+    <title>ShakeCraft v3.0: COMBO RUSH</title>
+    <link href="https://fonts.googleapis.com/css2?family=Black+Ops+One&family=Roboto+Mono:wght@500&display=swap" rel="stylesheet">
+    <style>
+        /* --- CSS STYLES --- */
+        body { 
+            margin: 0; overflow: hidden; background-color: #121212; 
+            font-family: 'Roboto Mono', monospace; user-select: none; 
+            touch-action: none; /* Отключаем зум пальцами */
+        }
+        
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; display: flex; flex-direction: column;
+            justify-content: space-between; z-index: 10;
+        }
+
+        /* Эффект красной вспышки при MAX комбо */
+        #damage-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: radial-gradient(circle, transparent 50%, rgba(255, 0, 0, 0.0) 100%);
+            pointer-events: none; transition: background 0.1s; z-index: 5;
+        }
+        .rage-mode { animation: pulseRed 0.5s infinite alternate; }
+        @keyframes pulseRed {
+            0% { box-shadow: inset 0 0 0px red; }
+            100% { box-shadow: inset 0 0 50px red; }
+        }
+
+        /* ВЕРХНЯЯ ПАНЕЛЬ */
+        .header { padding: 20px; display: flex; justify-content: space-between; text-shadow: 2px 2px 0 #000; }
+        .score-box { color: white; font-size: 14px; }
+        .rare-counter { color: #00D9FF; font-weight: bold; }
+
+        /* COMBO METER (Центр внимания) */
+        .combo-container {
+            position: absolute; top: 15%; left: 50%; transform: translateX(-50%);
+            text-align: center; opacity: 0; transition: opacity 0.2s, transform 0.1s;
+        }
+        .combo-value {
+            font-family: 'Black Ops One', cursive; font-size: 60px;
+            background: linear-gradient(180deg, #fff, #ccc);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+            filter: drop-shadow(4px 4px 0px #000);
+        }
+        .combo-label { color: white; font-size: 14px; letter-spacing: 5px; margin-top: -10px; text-shadow: 2px 2px 0 #000; }
+        
+        /* Анимации комбо */
+        .combo-x1 { transform: translateX(-50%) scale(1); }
+        .combo-x2 { transform: translateX(-50%) scale(1.2) rotate(-5deg); }
+        .combo-x4 { transform: translateX(-50%) scale(1.4) rotate(5deg); }
+        .combo-max { transform: translateX(-50%) scale(1.6); animation: shakeText 0.1s infinite; }
+
+        @keyframes shakeText {
+            0% { transform: translateX(-52%) scale(1.6); }
+            50% { transform: translateX(-48%) scale(1.6); }
+            100% { transform: translateX(-52%) scale(1.6); }
+        }
+
+        /* НИЖНЯЯ ПАНЕЛЬ */
+        .footer { padding: 20px; text-align: center; pointer-events: auto; display: flex; gap: 10px; justify-content: center;}
+        .btn {
+            background: #333; border: 2px solid #fff; color: white;
+            padding: 15px 25px; font-family: 'Black Ops One', cursive; font-size: 16px;
+            border-radius: 8px; text-transform: uppercase; cursor: pointer;
+            box-shadow: 0 5px 0 #000; active: translate(0, 5px);
+        }
+        .btn-tnt { background: #c92a2a; border-color: #ff6b6b; }
+        .btn-start { background: #5da81e; border-color: #8ce934; width: 80%; font-size: 24px; }
+
+        #start-screen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9); z-index: 99; display: flex;
+            flex-direction: column; align-items: center; justify-content: center; color: white;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <div id="damage-overlay"></div>
+
+<div id="start-screen">
+        <h1 style="font-family: 'Black Ops One'; font-size: 40px; color: #5da81e; margin-bottom: 10px;">SHAKE<br>CRAFT</h1>
+        <p style="color: #aaa; margin-bottom: 30px;">v3.0 VIRAL EDITION</p>
+        <div style="text-align: left; font-size: 12px; line-height: 1.6; margin-bottom: 30px;">
+            1. Тряси телефон = строй блоки<br>
+            2. Держи ритм = <b>COMBO x10</b><br>
+            3. COMBO x10 = Шанс на 💎 АЛМАЗЫ<br>
+        </div>
+        <button id="start-btn" class="btn btn-start">GO!</button>
+    </div>
+
+    <div id="ui-layer">
+        <div class="header">
+            <div class="score-box">BLOCKS: <span id="score-blocks">0</span></div>
+            <div class="score-box rare-counter">💎: <span id="score-gems">0</span></div>
+        </div>
+
+        <div class="combo-container" id="combo-ui">
+            <div class="combo-value" id="combo-text">x1</div>
+            <div class="combo-label">COMBO</div>
+        </div>
+
+        <div class="footer">
+            <button class="btn" onclick="saveScreenshot()">📷</button>
+            <button class="btn btn-tnt" onclick="explode()">🧨 TNT</button>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. CONFIG & STATE ---
+        const CONFIG = {
+            shakeThreshold: 15,
+            comboTimeout: 2000, // мс до сброса комбо
+            colors: {
+                bg: 0x121212,
+                common: 0x8B7355, // Dirt
+                wood: 0x8B4513,   // Wood
+                stone: 0x808080,  // Stone
+                gold: 0xFFD700,   // Gold (Epic)
+                diamond: 0x00D9FF, // Diamond (Legendary)
+                bedrock: 0x333333  // Bedrock
+            }
+        };
+
+        const STATE = {
+            blocks: 0,
+            gems: 0,
+            combo: 1,
+            lastShakeTime: 0,
+            isRageMode: false,
+            houseHeight: 0
+        };
+
+        // --- 2. AUDIO SYSTEM (SYNTH) ---
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(type, comboMult) {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            const now = audioCtx.currentTime;
+            
+            // Питч зависит от комбо! (Чем выше комбо, тем выше звук)
+            let baseFreq = 200 + (comboMult * 50); 
+
+            if (type === 'build') {
+                osc.type = 'square';
+                // "Чпок" звук
+                osc.frequency.setValueAtTime(baseFreq, now);
+                osc.frequency.exponentialRampToValueAtTime(baseFreq / 2, now + 0.1);
+                
+                gain.gain.setValueAtTime(0.1, now);
+                gain.gain.linearRampToValueAtTime(0, now + 0.1);
+                
+                osc.start(now);
+                osc.stop(now + 0.1);
+            } 
+            else if (type === 'rare') {
+                // "Дзынь!"
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(800, now);
+                osc.frequency.linearRampToValueAtTime(1200, now + 0.3);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+                osc.start(now);
+                osc.stop(now + 0.5);
+            }
+            else if (type === 'explode') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(100, now);
+                osc.frequency.exponentialRampToValueAtTime(10, now + 0.5);
+                gain.gain.setValueAtTime(0.5, now);
+                gain.gain.linearRampToValueAtTime(0, now + 0.5);
+                osc.start(now);
+                osc.stop(now + 0.5);
+            }
+        }
+
+        // --- 3. THREE.JS SETUP ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(CONFIG.colors.bg);
+        scene.fog = new THREE.Fog(CONFIG.colors.bg, 10, 40);
+
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        // Свет
+        const ambLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(10, 20, 10);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        // Группа мира
+        const worldGroup = new THREE.Group();
+        scene.add(worldGroup);
+
+        // Материалы (Reusable)
+        const matCommon = new THREE.MeshStandardMaterial({ color: CONFIG.colors.common });
+        const matWood = new THREE.MeshStandardMaterial({ color: CONFIG.colors.wood });
+        const matGold = new THREE.MeshStandardMaterial({ color: CONFIG.colors.gold, metalness: 0.8, roughness: 0.2, emissive: 0x222200 });
+        const matDiamond = new THREE.MeshStandardMaterial({ color: CONFIG.colors.diamond, metalness: 0.5, roughness: 0.1, emissive: 0x004444, opacity: 0.9, transparent: true });
+        
+        const geoBox = new THREE.BoxGeometry(1, 1, 1);
+        const geoEdges = new THREE.EdgesGeometry(geoBox);
+        const matLine = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 2 });
+
+        // Пол
+        const ground = new THREE.Mesh(new THREE.BoxGeometry(50, 1, 50), new THREE.MeshStandardMaterial({ color: 0x222222 }));
+        ground.position.y = -1;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        camera.position.set(8, 5, 8);
+        camera.lookAt(0, 2, 0);
+
+        // --- 4. GAME LOGIC ---
+
+        function updateCombo() {
+            const now = Date.now();
+            
+            // Проверка на сброс комбо
+            if (now - STATE.lastShakeTime > CONFIG.comboTimeout && STATE.combo > 1) {
+                STATE.combo = 1;
+                updateComboUI();
+            }
+            
+            requestAnimationFrame(updateCombo);
+        }
+        updateCombo();
+
+        function handleShake() {
+            const now = Date.now();
+            
+            // Комбо логика
+            if (now - STATE.lastShakeTime < CONFIG.comboTimeout) {
+                // Увеличиваем комбо, если трясем быстро
+                if (STATE.combo < 10) STATE.combo++; 
+            } else {
+                STATE.combo = 1; // Сброс
+            }
+            
+            STATE.lastShakeTime = now;
+            updateComboUI();
+            addBlock();
+        }
+
+        function updateComboUI() {
+            const ui = document.getElementById('combo-ui');
+            const txt = document.getElementById('combo-text');
+            const overlay = document.getElementById('damage-overlay');
+
+            // Видимость
+            ui.style.opacity = STATE.combo > 1 ? 1 : 0;
+            
+            // Текст
+            let displayMult = STATE.combo < 4 ? "x" + STATE.combo : 
+                              STATE.combo < 10 ? "x" + STATE.combo + "🔥" : "MAX 💀";
+            txt.innerText = displayMult;
+
+            // Классы анимации
+            txt.className = 'combo-value'; // reset
+            if (STATE.combo >= 2) txt.classList.add('combo-x2');
+            if (STATE.combo >= 4) txt.classList.add('combo-x4');
+            if (STATE.combo >= 10) txt.classList.add('combo-max');
+
+            // Rage Mode (Красный экран)
+            if (STATE.combo >= 10) overlay.classList.add('rage-mode');
+            else overlay.classList.remove('rage-mode');
+        }
+
+        function addBlock() {
+            // Рандом с учетом комбо (Gacha)
+            // При комбо 10 шанс на золото увеличивается в 5 раз
+            let luck = Math.random() * 100;
+            let comboBonus = STATE.combo >= 10 ? 5 : 1;
+
+            let material = matCommon;
+            let isRare = false;
+
+if (luck < 0.5 * comboBonus) { 
+                material = matDiamond; 
+                isRare = true; 
+                STATE.gems++;
+            } else if (luck < 5 * comboBonus) {
+                material = matGold;
+                isRare = true;
+            } else if (luck < 40) {
+                material = matWood;
+            }
+
+            // Процедурная позиция (Спираль)
+            let i = STATE.blocks;
+            let layerSize = 5; 
+            let y = Math.floor(i / (layerSize * layerSize));
+            let rem = i % (layerSize * layerSize);
+            let x = (rem % layerSize) - 2;
+            let z = Math.floor(rem / layerSize) - 2;
+
+            // Пропускаем центр для стен (если не пол)
+            if (y > 0 && x !== -2 && x !== 2 && z !== -2 && z !== 2) {
+                STATE.blocks++;
+                return; // Пустота внутри
+            }
+
+            const mesh = new THREE.Mesh(geoBox, material);
+            mesh.position.set(x, y, z);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            
+            // Обводка
+            const edges = new THREE.LineSegments(geoEdges, matLine);
+            mesh.add(edges);
+
+            // Анимация появления (Scale Up)
+            mesh.scale.set(0,0,0);
+            
+            worldGroup.add(mesh);
+            STATE.blocks++;
+            
+            // Tween (самодельный)
+            let s = 0;
+            let anim = setInterval(() => {
+                s += 0.2;
+                mesh.scale.set(s,s,s);
+                if (s >= 1) clearInterval(anim);
+            }, 16);
+
+            // Звук
+            playSound(isRare ? 'rare' : 'build', STATE.combo);
+
+            // UI Update
+            document.getElementById('score-blocks').innerText = STATE.blocks;
+            document.getElementById('score-gems').innerText = STATE.gems;
+
+            // Камера поднимается с домом
+            if (y > STATE.houseHeight) {
+                STATE.houseHeight = y;
+                // Плавный подъем
+                camera.position.y = 5 + (y * 0.5);
+                camera.lookAt(0, 2 + (y * 0.5), 0);
+            }
+        }
+
+        function explode() {
+            playSound('explode', 1);
+            worldGroup.clear();
+            STATE.blocks = 0;
+            STATE.gems = 0;
+            STATE.houseHeight = 0;
+            STATE.combo = 1;
+            camera.position.set(8, 5, 8);
+            camera.lookAt(0, 2, 0);
+            document.getElementById('score-blocks').innerText = 0;
+            document.getElementById('score-gems').innerText = 0;
+            updateComboUI();
+        }
+
+        window.saveScreenshot = function() {
+            renderer.render(scene, camera);
+            const link = document.createElement('a');
+            link.download = 'ShakeCraft_Combo_' + STATE.combo + '.png';
+            link.href = renderer.domElement.toDataURL('image/png');
+            link.click();
+        }
+
+        // --- 5. SENSORS ---
+        
+        let lastX=0, lastY=0, lastZ=0;
+        
+        function onMotion(e) {
+            let acc = e.accelerationIncludingGravity;
+            if (!acc) return;
+
+            // Фильтр шума
+            let dx = Math.abs(acc.x - lastX);
+            let dy = Math.abs(acc.y - lastY);
+            let dz = Math.abs(acc.z - lastZ);
+
+            if (dx + dy + dz > CONFIG.shakeThreshold) {
+                handleShake();
+                
+                // Камера трясется при Rage Mode
+                if (STATE.combo >= 10) {
+                    camera.position.x += (Math.random() - 0.5) * 0.5;
+                    camera.position.y += (Math.random() - 0.5) * 0.5;
+                }
+            }
+
+            lastX = acc.x;
+            lastY = acc.y;
+            lastZ = acc.z;
+        }
+
+        // Init
+        document.getElementById('start-btn').addEventListener('click', () => {
+
+document.getElementById('start-screen').style.display = 'none';
+            if (typeof DeviceMotionEvent.requestPermission === 'function') {
+                DeviceMotionEvent.requestPermission().then(resp => {
+                    if (resp === 'granted') window.addEventListener('devicemotion', onMotion, true);
+                });
+            } else {
+                window.addEventListener('devicemotion', onMotion, true);
+            }
+        });
+
+        // Render Loop
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // Вращение мира легкое
+            worldGroup.rotation.y += 0.005;
+            
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+    </script>
+</body>
+</html>
